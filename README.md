@@ -3,13 +3,19 @@
 Updated source of the Infer wrapper can be download from [here](https://github.com/TomasBeranek/infer-wrapper-for-incremental-analysis). The experiment was tested on Infer v1.1.0.
 
 # Usage
+The project must be first captured by Infer's capture phase in a reactive mode:
+
+```
+  infer capture --reactive -- BUILD_CMD
+```
+
 The wrapper is called instead of Infer's binary, when invoking the ```infer analyze``` command, for example:
 
 ```
   infer-inc analyze --pulse --bufferoverun
 ```
 
-To omit reported issues only the files that were analysed, add the ```--incremental-report``` option anywhere in the command, for example:
+To omit the reported issues from files that were not analysed, add the ```--incremental-report``` option anywhere in the command, for example:
 
 ```
   infer-inc --incremental-report analyze --pulse --bufferoverun
