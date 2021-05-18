@@ -1,6 +1,6 @@
-# An Infer wrapper that corrects Infer's incremental analysis
+# An Infer wrapper that corrects shortcomings in Infer's incremental analysis
 
-Updated source of the Infer wrapper can be download from [here](). The experiment was tested on Infer v1.1.0.
+Updated source of the Infer wrapper can be download from [here](https://github.com/TomasBeranek/infer-wrapper-for-incremental-analysis). The experiment was tested on Infer v1.1.0.
 
 # Usage
 The wrapper is called instead of Infer's binary, when invoking the ```infer analyze``` command, for example:
