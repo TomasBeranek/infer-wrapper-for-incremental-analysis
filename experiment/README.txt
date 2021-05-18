@@ -55,7 +55,7 @@ file changed.c.
       Now use the wrapper in the same as 'infer analyze', except substitute the 'infer'
       for the wrapper:
 
-        ../src/infer-inc analyze
+        ../infer-inc analyze
 
       The output of the previous command is:
 
