@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+
+ # ******************************* infer-inc ********************************
+ #  Project name: An Infer wrapper for the incremental analysis
+ #  Author:       Beranek Tomas
+ #  Date:         18.5.2021
+ #  Mail:         xberan46@stud.fit.vutbr.cz
+ # **************************************************************************
+
+import os
+import sqlite3
+from sqlite3 import Error
+import re
+import json
+import sys
+
+def create_connection(db_file):
+    connection = None
+    try:
+        connection = sqlite3.connect(db_file)
+    except Error as e:
+        print("ERROR: Failed to connect to the Infer's database: " + db_file)
+        exit(1)
+    return connection
+
+def get_functions_from_BLOB(BLOB):
+    #extract all C++/C (not Java!) function names from binary object
+    return re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*', BLOB.decode('cp437'))
+
+def intersection(list1, list2):
+    return set(list1) & set(list2)
+
+def load_files(db):
+    cursor = db.cursor()
+    cursor.execute("SELECT s.source_file, procedure_names, freshly_captured, callees "+
+                   "FROM source_files s, procedures p "+
+                   "WHERE s.source_file == p.source_file")
+    rows = cursor.fetchall()
+
+    file_dict = dict()
+    tmp_dict = dict() #to store tmp info about individual functions
+    for row in rows:
+        if row[0] in file_dict:
+            file_dict[row[0]]['callees'] = file_dict[row[0]]['callees'] + get_functions_from_BLOB(row[3])
+            #delete duplicities and callees, which are defined in current file
+            file_dict[row[0]]['callees'] = list(set(file_dict[row[0]]['callees']) - intersection(file_dict[row[0]]['callees'], file_dict[row[0]]['functions']))
+        else:
+            if row[2] == 1:
+                tmp_dict['changed'] = True
+            else:
+                tmp_dict['changed'] = False
+            tmp_dict['functions'] = get_functions_from_BLOB(row[1])
+            tmp_dict['callees'] = get_functions_from_BLOB(row[3])
+            file_dict[row[0]] = tmp_dict.copy()
+    return file_dict
+
+def find_file_by_function(file_dict, fun_name):
+    for file_name in file_dict:
+        if fun_name in file_dict[file_name]["functions"]:
+            return file_name
+
+def create_dependency_tree(file_dict, tree, curr_file_name):
+    if curr_file_name == None:
+        return
+
+    for fun_name in tree[curr_file_name]["data"]["callees"]:
+        #could be None - printf
+        fun_file_name = find_file_by_function(file_dict, fun_name)
+        if (fun_file_name != None) and (fun_file_name not in tree[curr_file_name]["child"]):
+            tree[curr_file_name]["child"].append(fun_file_name)
+            if curr_file_name not in tree[fun_file_name]["parent"]:
+                tree[fun_file_name]["parent"].append(curr_file_name)
+            tree[curr_file_name]["processed"] = True
+            if not tree[fun_file_name]["processed"]:
+                create_dependency_tree(file_dict, tree, fun_file_name)
+    #for files with no callees
+    tree[curr_file_name]["processed"] = True
+
+# DEBUG:
+def print_tree(tree):
+    print("-------------------------------------------------------")
+    for file in tree:
+        print(file + " - " + "Processed: " + str(tree[file]["processed"]) + ", Changed: " + str(tree[file]["data"]["changed"]))
+        print("\tCaller: " + str(tree[file]["parent"]))
+        print("\tCallee: " + str(tree[file]["child"]))
+    print("-------------------------------------------------------")
+
+def add_parents(tree, files_to_analyze, file_name):
+    if file_name not in files_to_analyze:
+        files_to_analyze.append(file_name)
+        for parent in tree[file_name]["parent"]:
+            add_parents(tree, files_to_analyze, parent)
+
+def find_files_to_analyze(tree):
+    files_to_analyze = []
+    for file_name in tree:
+        if tree[file_name]["data"]["changed"]:
+            add_parents(tree, files_to_analyze, file_name)
+    return files_to_analyze
+
+
+if __name__ == "__main__":
+    db_file = os.getcwd() + """/infer-out/results.db"""
+
+    incremental_report = False
+
+    if "--incremental-report" in sys.argv:
+        incremental_report = True
+        sys.argv.remove("--incremental-report")
+
+    #establish database connection
+    db = create_connection(db_file)
+    if db == None:
+        print("ERROR: Failed to connect to the Infer's database: " + db_file)
+        exit(1)
+
+    file_dict = load_files(db)
+    main_file = find_file_by_function(file_dict, "main")
+
+    #create node for every file
+    tree = dict()
+    for file_name in file_dict:
+        node = dict()
+        node["parent"] = []
+        node["child"] = []
+        node["processed"] = False
+        node["data"] = dict()
+        node["data"]["functions"] = file_dict[file_name]["functions"]
+        node["data"]["changed"] = file_dict[file_name]["changed"]
+        node["data"]["callees"] = file_dict[file_name]["callees"]
+        tree[file_name] = node
+
+    #connect nodes to the "tree"
+    create_dependency_tree(file_dict, tree, main_file)
+
+    #get list of files to analyze
+    infer_config = dict()
+    files_to_analyze = find_files_to_analyze(tree)
+
+    infer_config["skip-analysis-in-path"] = []
+    for file_name in file_dict:
+        if file_name not in files_to_analyze:
+            # first char is not a part of the function name
+            infer_config["skip-analysis-in-path"].append(file_name[1:])
+
+    if incremental_report:
+        infer_config["report-blacklist-path-regex"] = infer_config["skip-analysis-in-path"]
+
+    with open(".inferconfig", "w") as outfile:
+        json.dump(infer_config, outfile, indent=4)
+
+    # ommit the script name
+    os.system(' '.join(["infer"] + sys.argv[1:]))
+
+    # we MUST remove it, otherwise some files may be ommited during the capture phase
+    os.system("rm .inferconfig")
